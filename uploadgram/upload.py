@@ -14,16 +14,17 @@
 
 
 import os
+import asyncio
 from time import time
-from asyncio import sleep
 from tqdm import tqdm
 from hachoir.metadata import extractMetadata
 from hachoir.parser import createParser
+from pyrogram.errors import FloodWait
 from pyrogram.types import Message
 from .config import TG_AUDIO_TYPES, TG_VIDEO_TYPES
 from .progress import progress_for_pyrogram
 from .take_screen_shot import take_screen_shot
-
+from natsort import os_sorted
 
 async def upload_dir_contents(
     tg_max_file_size: int,
@@ -43,11 +44,12 @@ async def upload_dir_contents(
             return False
     else:
         dir_contents = os.listdir(dir_path)
-    dir_contents.sort()
+    dir_contents = os_sorted(dir_contents)
     for dir_cntn in dir_contents:
         current_name = os.path.join(dir_path, dir_cntn)
 
         if os.path.isdir(current_name):
+          try:         
             await upload_dir_contents(
                 tg_max_file_size,
                 current_name,
@@ -58,8 +60,11 @@ async def upload_dir_contents(
                 bot_sent_message,
                 console_progress,
             )
+          except FloodWait as e:
+              await asyncio.sleep(e.value)
 
         elif os.stat(current_name).st_size <= tg_max_file_size:
+          try:        
             response_message = await upload_single_file(
                 current_name,
                 thumbnail_file,
@@ -70,8 +75,10 @@ async def upload_dir_contents(
             )
             if isinstance(response_message, Message) and delete_on_success:
                 os.remove(current_name)
+          except FloodWait as e:
+              await asyncio.sleep(e.value)
 
-        await sleep(10)
+        await asyncio.sleep(5)
 
 
 async def upload_single_file(
@@ -104,6 +111,7 @@ async def upload_single_file(
         )
 
     if file_path.upper().endswith(TG_VIDEO_TYPES) and not force_document:
+      try:    
         return await upload_as_video(
             usr_sent_message,
             bot_sent_message,
@@ -113,8 +121,11 @@ async def upload_single_file(
             start_time,
             pbar,
         )
+      except FloodWait as e:
+          await asyncio.sleep(e.value)
 
     elif file_path.upper().endswith(TG_AUDIO_TYPES) and not force_document:
+      try:
         return await upload_as_audio(
             usr_sent_message,
             bot_sent_message,
@@ -124,8 +135,11 @@ async def upload_single_file(
             start_time,
             pbar,
         )
-
+      except FloodWait as e:
+          await asyncio.sleep(e.value)
+          
     else:
+      try:
         return await upload_as_document(
             usr_sent_message,
             bot_sent_message,
@@ -135,7 +149,8 @@ async def upload_single_file(
             start_time,
             pbar,
         )
-
+      except FloodWait as e:
+          await asyncio.sleep(e.value)
 
 async def upload_as_document(
     usr_sent_message: Message,
@@ -175,8 +190,8 @@ async def upload_as_video(
     try:
         metadata = extractMetadata(createParser(file_path))
         duration = 0
-        width = 0
-        height = 0
+        width = 1920
+        height = 1080
         if metadata and metadata.has("duration"):
             duration = metadata.get("duration").seconds
         thumb_nail_img = await take_screen_shot(
@@ -185,6 +200,7 @@ async def upload_as_video(
             (duration / 2),
         )
     except AssertionError:
+      try:
         return await upload_as_document(
             usr_sent_message,
             bot_sent_message,
@@ -194,8 +210,10 @@ async def upload_as_video(
             start_time,
             pbar,
         )
+      except FloodWait as e:
+          await asyncio.sleep(e.value)        
     try:
-        metadata = extractMetadata(createParser(thumb_nail_img))
+        metadata = extractMetadata(createParser(file_path))
         if metadata and metadata.has("width"):
             width = metadata.get("width")
         if metadata and metadata.has("height"):
@@ -204,7 +222,7 @@ async def upload_as_video(
         pass
     _tmp_m = await usr_sent_message.reply_video(
         video=file_path,
-        quote=True,
+        quote=False,
         thumb=thumb_nail_img if not thumbnail_file else thumbnail_file,
         duration=duration,
         width=width,
@@ -256,7 +274,7 @@ async def upload_as_audio(
 
     return await usr_sent_message.reply_audio(
         audio=file_path,
-        quote=True,
+        quote=False,
         caption=caption_rts,
         duration=duration,
         performer=performer,
